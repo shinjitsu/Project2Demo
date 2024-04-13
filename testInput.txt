@@ -1,0 +1,53 @@
+OS Programming Project2: A virtual File System.
+
+Summary: Now that you have built your shells and looked at file systems a bit, we will implement a virtual file system.
+
+Due:  Mon April 8th by 11:59pm submitted on github
+Starting Out: create a new go package as a subdirectory of the project you built in project1 (in project3 we will put these two together and use both.)
+Details:
+In a separate package which is a sub-directory of your previous project (call it something like filesystem)
+    • create a package-wide variable called Disk which will be an array of bytes of the appropriate size. (you may make it the 2 dimensional array of the sort that we talked about in class with the inner part of the array being the block size)
+        ◦ This will default to all zeros
+    • Create a struct for the inode (go struct). We will assume old school file systems that had only one user, so no need to keep track of users and groups
+        ◦ needs to include at least the following:
+            ▪ isValid (true if this inode is an allocated file)
+            ▪ isDirectory (true if this inode represents a directory rather than regular file
+            ▪ 4 data blocks – three direct blocks and an indirect blocks
+            ▪ created time
+            ▪ last modified time
+            ▪ anything else that you need.
+    • create a format for your directories
+        ◦ document this in your readme.
+        ◦ Let's assume fixed size file names for simplicity (the 'old school' 8characters plus 3 version)
+    • use a 1024 byte block size (files can only be allocated in 1024 byte increments. And you need one allocation bit per block
+    • let's have 6MB of data storage on our virtual disk
+    • have space for the iNodes in your virtual disk
+        ◦ write inode structs in a contiguous space in your virtual disk
+        ◦ allow at least 80 inodes (including the empty zero inode)
+    • have space for the allocation bitmap
+    • implement the data allocation and inode bitmaps
+        ◦ to help with time, if you want to write booleans into the virtual disk you can
+        ◦ if you do it as an actual bitmap, 15 points of extra credit.
+    • Finally write several go functions in the filesystem package that will act like virtual system calls
+        ◦ open
+            ▪ it should have the following parameters:
+                • open mode, which should allow choices including, read, write, append, create
+                • file name:
+                • parent directory (as an inode)
+        ◦ unlink
+            ▪ params
+                • filename or inode
+                • parent directory inode
+        ◦ read
+        ◦ write
+Readme: In the project folder include a readme (readme.md or readme.txt) that includes the following information
+    • Your name
+    • anything I need to know
+        ◦ what is the format of your directory files?
+        ◦ for example I need to know your iNode size,
+        ◦ Where is the allocation bitmap?
+        ◦ Where do the inodes begin in the virtual disk/array?
+        ◦ How many
+    • anything that was left undone
+
+Then our final programming project will be to have you use your shell and this file system and reimplement things like mv ,ls and several other basic utilities to use this virtual file system, but that will be in early April
