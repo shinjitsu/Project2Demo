@@ -450,7 +450,7 @@ func Write(file INode, content []byte) {
 func allocateNewBlock(sblock SuperBlock) int {
 	freeBlockBitmap := ReadFreeBlockBitmap(sblock)
 	blockNum := 0
-	for blockNum, bitmapBlock := range freeBlockBitmap {
+	for _, bitmapBlock := range freeBlockBitmap {
 		for locInBlock, bit := range bitmapBlock {
 			if !bit {
 				//this bit is available
