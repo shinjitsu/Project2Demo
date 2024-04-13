@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -50,6 +51,8 @@ type DirectoryEntry struct {
 }
 
 type DirectoryBlock [32]DirectoryEntry
+
+type IndirectBlock [128]int
 
 const (
 	CREATE = iota
@@ -350,4 +353,134 @@ func Unlink(inodeNumToDelete int, parentDir INode) {
 	}
 	//if we got here then we tried to delete a file not in this directory
 	log.Fatal("Tried to delete file not in folder")
+}
+
+func Read(file INode) string { //I told some of you who asked that you can assume all text files, so I'll return a string
+	if !file.IsValid || file.IsDirectory {
+		return "" //maybe we should error, but I'll just return nothing
+	}
+	//I'm going to use string.Builder - which I didn't introduce in your class, but you can use + and it will be less efficient but will work
+	fileContents := strings.Builder{}
+	firstBlock := Disk[file.DirectBlock1]
+	fileContents.Write(firstBlock[:])
+	if file.DirectBlock2 == 0 {
+		return fileContents.String()
+	}
+	secondBlock := Disk[file.DirectBlock2]
+	fileContents.Write(secondBlock[:])
+	if file.DirectBlock3 == 0 {
+		return fileContents.String()
+	}
+	thirdBlock := Disk[file.DirectBlock3]
+	fileContents.Write(thirdBlock[:])
+	if file.IndirectBlock == 0 {
+		return fileContents.String()
+	}
+	//now things get more complicated, we need to read from the indirect block
+	indirectBlockVal := getIndirectBlock(file)
+	for _, blockNum := range indirectBlockVal {
+		if blockNum == 0 {
+			break
+		} else {
+			fileContents.Write(Disk[blockNum][:])
+		}
+	}
+	return fileContents.String()
+}
+
+func Write(file INode, content []byte) {
+	numCompleteBlocks := len(content) / BLOCK_SIZE
+	hasLeftovers := len(content)%BLOCK_SIZE > 0
+	block := 0
+	for ; block < numCompleteBlocks; block++ {
+		if block == 1 {
+			copy(Disk[file.DirectBlock1][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+		} else if block == 2 {
+			copy(Disk[file.DirectBlock2][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+		} else if block == 3 {
+			copy(Disk[file.DirectBlock3][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+		} else {
+			indirectBlockVal := getIndirectBlock(file)
+			for indirectBlockNum, blockLoc := range indirectBlockVal {
+				if blockLoc != 0 {
+					copy(Disk[blockLoc][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+					block++
+					if block >= numCompleteBlocks {
+						break
+					}
+				} else { //at this point we are appending to the file, we need to allocate blocks that we write to
+					newBlock := allocateNewBlock(ReadSuperBlock())
+					indirectBlockVal[indirectBlockNum] = newBlock
+					//write the actual data to disk
+					copy(Disk[newBlock][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+					block++
+				}
+			}
+			//if we wrote anything to indirect blocks, then write the indirect block block again just incase
+			indirectBlockBytes := EncodeToBytes(indirectBlockVal)
+			//write the indirect block to disk
+			copy(Disk[file.IndirectBlock][:], indirectBlockBytes)
+		}
+	}
+	if hasLeftovers {
+		leftovers := content[(len(content)/BLOCK_SIZE)*block:]
+		if numCompleteBlocks == 1 {
+			copy(Disk[file.DirectBlock2][:], leftovers)
+		} else if numCompleteBlocks == 2 {
+			copy(Disk[file.DirectBlock3][:], leftovers)
+		} else {
+			indirectBlockVal := getIndirectBlock(file)
+			finalBlockLoc := indirectBlockVal[numCompleteBlocks-3] //minus 3 for the three direct blocks
+			if finalBlockLoc != 0 {
+				copy(Disk[finalBlockLoc][:], leftovers)
+			} else {
+				newBlock := allocateNewBlock(ReadSuperBlock())
+				indirectBlockVal[numCompleteBlocks-3] = newBlock
+				indirectBlockBytes := EncodeToBytes(indirectBlockVal)
+				//write the indirect block to disk
+				copy(Disk[file.IndirectBlock][:], indirectBlockBytes)
+				//write the actual data to disk
+				copy(Disk[newBlock][:], leftovers)
+			}
+		}
+	}
+}
+
+// returns location of newly allocated block
+func allocateNewBlock(sblock SuperBlock) int {
+	freeBlockBitmap := ReadFreeBlockBitmap(sblock)
+	blockNum := 0
+	for blockNum, bitmapBlock := range freeBlockBitmap {
+		for locInBlock, bit := range bitmapBlock {
+			if !bit {
+				//this bit is available
+				freeBlockBitmap[blockNum][locInBlock] = true
+				writeFreeBlockBitmapToDisk(freeBlockBitmap, sblock)
+				return blockNum
+			} else {
+				blockNum++
+			}
+		}
+	}
+	log.Fatal("Unable to allocate a free block")
+	return 0
+}
+
+func getIndirectBlock(file INode) IndirectBlock {
+	if file.IndirectBlock == 0 {
+		return IndirectBlock{}
+	}
+	//now we need to do the indirect blocks
+	indirectBlockBytes := getIndirectBlockFromDisk(file.IndirectBlock)
+	indirectBlockVal := IndirectBlock{}
+	decoder := gob.NewDecoder(bytes.NewReader(indirectBlockBytes[:]))
+	err := decoder.Decode(&indirectBlockVal)
+	if err != nil { //the better blue screen came from jetbrains AI
+		log.Fatal("Error decoding IndirectBlock from disk - better blue Screen", err)
+	}
+	return indirectBlockVal
+}
+
+func getIndirectBlockFromDisk(indirectBlockNum int) [1024]byte {
+	return Disk[indirectBlockNum]
 }
