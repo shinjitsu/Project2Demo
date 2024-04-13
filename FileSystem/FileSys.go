@@ -19,6 +19,7 @@ import (
 // furthermore I'll need 1 block for the inode 'bitmap'
 // total blocks: 6144+1+32+6+1 => 6184
 var Disk [66184][BLOCK_SIZE]byte
+var RootFolder INode
 
 const (
 	INODE_SIZE = 64
@@ -132,6 +133,7 @@ func createRootDir(sblock SuperBlock) {
 	copy(Disk[rootFolder.DirectBlock1][:], rootBlockBytes)
 	rootFolderAsBytes := EncodeToBytes(rootFolder)
 	copy(Disk[sblock.INodeStart][INODE_SIZE*sblock.RootDirInode:INODE_SIZE*sblock.RootDirInode+INODE_SIZE], rootFolderAsBytes)
+	RootFolder = rootFolder
 }
 
 func CreateDirectoryFile(parentInode int, folderinode int) DirectoryBlock {
@@ -424,7 +426,9 @@ func Write(file INode, content []byte) {
 	}
 	if hasLeftovers {
 		leftovers := content[(len(content)/BLOCK_SIZE)*block:]
-		if numCompleteBlocks == 1 {
+		if numCompleteBlocks == 0 {
+			copy(Disk[file.DirectBlock1][:], leftovers)
+		} else if numCompleteBlocks == 1 {
 			copy(Disk[file.DirectBlock2][:], leftovers)
 		} else if numCompleteBlocks == 2 {
 			copy(Disk[file.DirectBlock3][:], leftovers)
