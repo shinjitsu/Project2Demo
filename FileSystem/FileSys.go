@@ -3,7 +3,6 @@ package FileSystem
 import (
 	"bytes"
 	"encoding/gob"
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -46,11 +45,18 @@ type INode struct {
 }
 
 type DirectoryEntry struct {
-	inode int
-	name  [20]byte //I suggested 12 in class, but I realize that 20 will make this an even 32 bytes
+	Inode int
+	Name  [20]byte //I suggested 12 in class, but I realize that 20 will make this an even 32 bytes
 }
 
 type DirectoryBlock [32]DirectoryEntry
+
+const (
+	CREATE = iota
+	READ
+	WRITE
+	APPEND
+)
 
 func InitializeFileSystem() {
 	//order on the Disk will be Superblock in block 0, inode bitmap in block 1, free block bitmap  blocks 2-7
@@ -72,18 +78,18 @@ func InitializeFileSystem() {
 
 func createFreeBlockBitmap(block SuperBlock) {
 	//unlike the inode bitmap, the free block bitmap will take up multiple blocks
+	wholeFreeBlockBitmap := make([][BLOCK_SIZE]bool, 1)
 	for bitmapBlock := block.InodeBitmapStart; bitmapBlock < block.INodeStart; bitmapBlock++ {
-		currentFreeBlockBitmap := make([]bool, BLOCK_SIZE) //should be all false by default
-		currentFreeAsBytes := EncodeToBytes(currentFreeBlockBitmap)
-		copy(Disk[bitmapBlock][:], currentFreeAsBytes)
+		var currentFreeBlockBitmap [1024]bool //should be all false by default
+		wholeFreeBlockBitmap = append(wholeFreeBlockBitmap, currentFreeBlockBitmap)
 	}
+	writeFreeBlockBitmapToDisk(wholeFreeBlockBitmap, block)
 }
 
 func createInodeBitmap(block SuperBlock) {
 	//the inode bitmap will be in block 1 and will hold 512 booleans
 	var inodeBitmap [512]bool //all set to zero by default
-	bitbmapBytes := EncodeToBytes(inodeBitmap)
-	copy(Disk[block.INodeStart][:], bitbmapBytes)
+	writeInodeBitmapToDisk(inodeBitmap, block)
 }
 
 func createInodes(sblock SuperBlock) {
@@ -118,43 +124,50 @@ func createRootDir(sblock SuperBlock) {
 	freeBlockBitmap := ReadFreeBlockBitmap(sblock)
 	freeBlockBitmap[0][rootFolder.DirectBlock1] = true
 	writeFreeBlockBitmapToDisk(freeBlockBitmap, sblock)
-	rootBlock := createDirectoryFile(0, sblock.RootDirInode)
+	rootBlock := CreateDirectoryFile(0, sblock.RootDirInode)
 	rootBlockBytes := EncodeToBytes(rootBlock)
 	copy(Disk[rootFolder.DirectBlock1][:], rootBlockBytes)
-	//now write inode of root folder
+	rootFolderAsBytes := EncodeToBytes(rootFolder)
+	copy(Disk[sblock.INodeStart][INODE_SIZE*sblock.RootDirInode:INODE_SIZE*sblock.RootDirInode+INODE_SIZE], rootFolderAsBytes)
 }
 
-func createDirectoryFile(parentInode int, folderinode int) DirectoryBlock {
+func CreateDirectoryFile(parentInode int, folderinode int) DirectoryBlock {
 	dot := DirectoryEntry{
-		inode: folderinode,
+		Inode: folderinode,
 	}
-	dot.name[0] = '.'
+	dot.Name[0] = '.'
 	dotdot := DirectoryEntry{
-		inode: parentInode,
+		Inode: parentInode,
 	}
-	dotdot.name[0] = '.'
-	dotdot.name[1] = '.'
+	dotdot.Name[0] = '.'
+	dotdot.Name[1] = '.'
 	return DirectoryBlock{dot, dotdot}
 }
 
 func writeFreeBlockBitmapToDisk(bitmap [][BLOCK_SIZE]bool, sblock SuperBlock) {
 	for loc, bitmapPart := range bitmap {
-		bitmapBytes := EncodeToBytes(bitmapPart)
-		copy(Disk[sblock.FreeBlockStart+loc][:], bitmapBytes)
+		for blockLoc, bit := range bitmapPart {
+			if bit {
+				Disk[loc+sblock.FreeBlockStart][blockLoc] = 1
+			} else {
+				Disk[loc+sblock.FreeBlockStart][blockLoc] = 0
+			}
+		}
 	}
 }
 
 func ReadFreeBlockBitmap(sblock SuperBlock) [][BLOCK_SIZE]bool {
 	//I decided to cheese this just a little to make life a little easier see below to do it right
-	freeBlockBitmap := make([][BLOCK_SIZE]bool, sblock.InodeBitmapStart-sblock.FreeBlockStart)
-	count := 0
+	freeBlockBitmap := make([][BLOCK_SIZE]bool, sblock.INodeStart-sblock.FreeBlockStart)
+
 	for bitmapBlockNum := sblock.FreeBlockStart; bitmapBlockNum < sblock.INodeStart; bitmapBlockNum++ {
-		var freeBlockBitmapPart [BLOCK_SIZE]bool
-		err := json.Unmarshal(Disk[bitmapBlockNum][:], &freeBlockBitmapPart)
-		if err != nil {
-			log.Fatal(err)
+		for bitLoc := 0; bitLoc < BLOCK_SIZE; bitLoc++ {
+			if Disk[bitmapBlockNum][bitLoc] != 0 {
+				freeBlockBitmap[bitmapBlockNum-sblock.FreeBlockStart][bitLoc] = true
+			} else {
+				freeBlockBitmap[bitmapBlockNum-sblock.FreeBlockStart][bitLoc] = false
+			}
 		}
-		freeBlockBitmap[count] = freeBlockBitmapPart
 	}
 	return freeBlockBitmap
 }
@@ -173,16 +186,22 @@ func ReadFreeBlockBitmap(sblock SuperBlock) [][BLOCK_SIZE]bool {
 //	return freeBlockBitmap
 //}
 
-func writeInodeBitmapToDisk(bitmap []bool, sblock SuperBlock) {
-	bitmapbytes := EncodeToBytes(bitmap)
-	copy(Disk[sblock.InodeBitmapStart][:], bitmapbytes)
+func writeInodeBitmapToDisk(bitmap [512]bool, sblock SuperBlock) {
+	//I ended up having to copy bit by bit (bool by bool) there was no scope for being lazy
+	for loc, bit := range bitmap {
+		if bit {
+			Disk[sblock.InodeBitmapStart][loc] = 1
+		} else {
+			Disk[sblock.InodeBitmapStart][loc] = 0
+		}
+	}
 }
 
-func ReadINodeBitmap(block SuperBlock) []bool {
-	iNodeBitmap := make([]bool, BLOCK_SIZE)
-	err := json.Unmarshal(Disk[block.InodeBitmapStart][:], &iNodeBitmap) //a little bit of a cheat, let standard library convert for me
-	if err != nil {
-		log.Fatal("Error getting the INodeBitmap", err)
+func ReadINodeBitmap(block SuperBlock) [512]bool {
+	var iNodeBitmap [512]bool
+	bitMapOnDisk := Disk[block.InodeBitmapStart]
+	for bitNum := 0; bitNum < 512; bitNum++ {
+		iNodeBitmap[bitNum] = bitMapOnDisk[bitNum] != 0 //if the byte is zero, bit is false, non-zero is true
 	}
 	return iNodeBitmap
 }
@@ -206,6 +225,129 @@ func EncodeToBytes(p interface{}) []byte {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("uncompressed size (bytes): ", len(buf.Bytes()))
+	//fmt.Println("uncompressed size (bytes): ", len(buf.Bytes()))
 	return buf.Bytes()
+}
+
+// Open return values are first INodeStructure and second INode Number
+func Open(mode int, name string, parentDir INode) (INode, int) {
+	if !parentDir.IsDirectory || !parentDir.IsValid {
+		log.Fatal("Tried to open file with invalid directory")
+	}
+	BlockWhereWeFindDirectoryEntry := parentDir.DirectBlock1 //I'm going to cheat here and only check direct block one since we would need more than 30 files otherwise
+	DirectoryBlockBytes := Disk[BlockWhereWeFindDirectoryEntry]
+	directoryEntryBlock := DirectoryBlock{}
+	decoder := gob.NewDecoder(bytes.NewReader(DirectoryBlockBytes[:]))
+	err := decoder.Decode(&directoryEntryBlock)
+	if err != nil {
+		log.Fatal("Error decoding Directory block: ", err)
+	}
+	validDirectoryEntries := 0
+	for _, entry := range directoryEntryBlock {
+		fmt.Println("DEBUG FileName: ", string(entry.Name[:]))
+		if string(entry.Name[:]) == name {
+			return getInodeFromDisk(entry.Inode), entry.Inode //if file is here, I'll just return it and the Inode Number for now
+		}
+		if entry.Inode == 0 { //once we get to invalid entries, get out of look
+			break
+		}
+		validDirectoryEntries++
+	}
+	//if we got here then the file wasn't in the directory
+	if mode == CREATE {
+		newInode, newInodeNum := createNewInode(ReadSuperBlock())
+		newFile := DirectoryEntry{
+			Inode: newInodeNum,
+		}
+		for num, char := range name {
+			if num >= 20 {
+				break
+			}
+			newFile.Name[num] = byte(char)
+		}
+		directoryEntryBlock[validDirectoryEntries] = newFile
+		//write the directory entry back to the disk block
+		currentDirectoryBlockBytes := EncodeToBytes(directoryEntryBlock)
+		copy(Disk[parentDir.DirectBlock1][:], currentDirectoryBlockBytes)
+		return newInode, newInodeNum
+	}
+	return INode{}, 0 //if we got here, return invalid/0 inode
+}
+
+// return value will be the INode data structure, and the Inode Number
+func createNewInode(sBlock SuperBlock) (INode, int) {
+	inodeBitmap := ReadINodeBitmap(sBlock)
+	freeInodeLoc := sBlock.RootDirInode        //we will begin looking for a free inode starting with the root node
+	for ; freeInodeLoc < 512; freeInodeLoc++ { //there are only 512 possible inodes
+		if inodeBitmap[freeInodeLoc] == false { //once we find an unused one stop
+			inodeBitmap[freeInodeLoc] = true
+			break
+		}
+	}
+	if freeInodeLoc >= 511 {
+		log.Fatal("All out of Inodes") //in a real file system I would return the 0/invalid inode
+	}
+	writeInodeBitmapToDisk(inodeBitmap, sBlock) //let's write it back with our new inode claimed
+	newInode := INode{
+		IsValid:        true,
+		IsDirectory:    false,
+		version:        0,
+		DirectBlock1:   0,
+		DirectBlock2:   0,
+		DirectBlock3:   0,
+		IndirectBlock:  0,
+		CreateTime:     time.Now().Unix(),
+		LastModifyTime: time.Now().Unix(),
+	}
+	writeInodeToDisk(newInode, freeInodeLoc, sBlock)
+	return newInode, freeInodeLoc
+}
+
+func writeInodeToDisk(inode INode, InodeNum int, sblock SuperBlock) {
+	InodeAsBytes := EncodeToBytes(inode)
+	InodeBlock := (BLOCK_SIZE / INODE_SIZE) / InodeNum //once again this is floor integer division
+	InodeLocInBlock := BLOCK_SIZE % InodeNum
+	copy(Disk[sblock.INodeStart+InodeBlock][INODE_SIZE*InodeLocInBlock:INODE_SIZE*InodeLocInBlock+INODE_SIZE], InodeAsBytes)
+}
+
+func getInodeFromDisk(inodeNum int) INode {
+	INodeBlock := inodeNum / (BLOCK_SIZE / INODE_SIZE) //there are 32 inodes per block, again int/floor division
+	InodeOffset := inodeNum % (BLOCK_SIZE / INODE_SIZE)
+	InodeFromDisk := INode{}
+	InodeAsBytes := Disk[INodeBlock][InodeOffset : InodeOffset+INODE_SIZE]
+	decoder := gob.NewDecoder(bytes.NewReader(InodeAsBytes))
+	err := decoder.Decode(&InodeFromDisk)
+	if err != nil {
+		log.Fatal("Error decoding Inode from disk - better blue Screen", err)
+	}
+	return InodeFromDisk
+}
+
+func Unlink(inodeNumToDelete int, parentDir INode) {
+	BlockWhereWeFindDirectoryEntry := parentDir.DirectBlock1 //I'm going to cheat here and only check direct block one since we would need more than 30 files otherwise
+	DirectoryBlockBytes := Disk[BlockWhereWeFindDirectoryEntry]
+	directoryEntryBlock := DirectoryBlock{}
+	decoder := gob.NewDecoder(bytes.NewReader(DirectoryBlockBytes[:]))
+	err := decoder.Decode(&directoryEntryBlock)
+	if err != nil {
+		log.Fatal("Error decoding Directory block: ", err)
+	}
+	validDirectoryEntries := 0
+	for _, entry := range directoryEntryBlock {
+		if entry.Inode == inodeNumToDelete {
+			directoryEntryBlock[validDirectoryEntries] = DirectoryEntry{} //put empty one here
+			inodeBitmap := ReadINodeBitmap(ReadSuperBlock())
+			inodeBitmap[entry.Inode] = false
+			writeInodeBitmapToDisk(inodeBitmap, ReadSuperBlock())
+			inodeStruct := getInodeFromDisk(entry.Inode)
+			inodeStruct.IsValid = false
+			writeInodeToDisk(inodeStruct, entry.Inode, ReadSuperBlock())
+			//now write directory structure back out to disk
+			currentDirectoryBlockBytes := EncodeToBytes(directoryEntryBlock)
+			copy(Disk[parentDir.DirectBlock1][:], currentDirectoryBlockBytes)
+		}
+		validDirectoryEntries++
+	}
+	//if we got here then we tried to delete a file not in this directory
+	log.Fatal("Tried to delete file not in folder")
 }
