@@ -18,6 +18,6 @@ func main() {
 	}
 	contentToWrite := []byte(stringContents)
 
-	FileSystem.Write(newFileInode, contentToWrite)
+	FileSystem.Write(&newFileInode, contentToWrite)
 	fmt.Println(FileSystem.Read(newFileInode))
 }

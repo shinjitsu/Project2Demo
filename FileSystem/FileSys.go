@@ -216,7 +216,7 @@ func ReadSuperBlock() SuperBlock {
 	decoder := gob.NewDecoder(bytes.NewReader(Disk[0][:]))
 	err := decoder.Decode(&sBlock)
 	if err != nil {
-		log.Fatal("Unable to Decode superblock - better blue Screen", err)
+		log.Fatal("Unable to Decode superblock - better blue Screen ", err)
 	}
 	return sBlock
 }
@@ -379,7 +379,7 @@ func Read(file INode) string { //I told some of you who asked that you can assum
 		return fileContents.String()
 	}
 	//now things get more complicated, we need to read from the indirect block
-	indirectBlockVal := getIndirectBlock(file)
+	indirectBlockVal := getIndirectBlock(&file)
 	for _, blockNum := range indirectBlockVal {
 		if blockNum == 0 {
 			break
@@ -390,17 +390,38 @@ func Read(file INode) string { //I told some of you who asked that you can assum
 	return fileContents.String()
 }
 
-func Write(file INode, content []byte) {
+func Write(file *INode, content []byte) {
 	numCompleteBlocks := len(content) / BLOCK_SIZE
 	hasLeftovers := len(content)%BLOCK_SIZE > 0
-	block := 0
-	for ; block < numCompleteBlocks; block++ {
+	block := 1
+	for ; block <= numCompleteBlocks; block++ {
 		if block == 1 {
-			copy(Disk[file.DirectBlock1][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+			if file.DirectBlock1 == 0 {
+				file.DirectBlock1 = allocateNewBlock(ReadSuperBlock())
+			}
+			blockEnd := BLOCK_SIZE * (block + 1)
+			if blockEnd > len(content) {
+				blockEnd = len(content)
+			}
+			copy(Disk[file.DirectBlock1][:], content[BLOCK_SIZE*block:blockEnd])
 		} else if block == 2 {
-			copy(Disk[file.DirectBlock2][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+			if file.DirectBlock2 == 0 {
+				file.DirectBlock2 = allocateNewBlock(ReadSuperBlock())
+			}
+			blockEnd := BLOCK_SIZE * (block + 1)
+			if blockEnd > len(content) {
+				blockEnd = len(content)
+			}
+			copy(Disk[file.DirectBlock2][:], content[BLOCK_SIZE*block:blockEnd])
 		} else if block == 3 {
-			copy(Disk[file.DirectBlock3][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+			if file.DirectBlock3 == 0 {
+				file.DirectBlock3 = allocateNewBlock(ReadSuperBlock())
+			}
+			blockEnd := BLOCK_SIZE * (block + 1)
+			if blockEnd > len(content) {
+				blockEnd = len(content)
+			}
+			copy(Disk[file.DirectBlock3][:], content[BLOCK_SIZE*block:blockEnd])
 		} else {
 			indirectBlockVal := getIndirectBlock(file)
 			for indirectBlockNum, blockLoc := range indirectBlockVal {
@@ -453,12 +474,15 @@ func Write(file INode, content []byte) {
 // returns location of newly allocated block
 func allocateNewBlock(sblock SuperBlock) int {
 	freeBlockBitmap := ReadFreeBlockBitmap(sblock)
-	blockNum := 0
-	for _, bitmapBlock := range freeBlockBitmap {
+	blockNum := RootFolder.DirectBlock1 //lets start after the first direct block
+	for bitblock, bitmapBlock := range freeBlockBitmap {
 		for locInBlock, bit := range bitmapBlock {
+			if bitblock == 0 && locInBlock <= blockNum {
+				continue //skip till we get to one in a valid area
+			}
 			if !bit {
 				//this bit is available
-				freeBlockBitmap[blockNum][locInBlock] = true
+				freeBlockBitmap[bitblock][locInBlock] = true
 				writeFreeBlockBitmapToDisk(freeBlockBitmap, sblock)
 				return blockNum
 			} else {
@@ -470,8 +494,9 @@ func allocateNewBlock(sblock SuperBlock) int {
 	return 0
 }
 
-func getIndirectBlock(file INode) IndirectBlock {
+func getIndirectBlock(file *INode) IndirectBlock {
 	if file.IndirectBlock == 0 {
+		file.IndirectBlock = allocateNewBlock(ReadSuperBlock())
 		return IndirectBlock{}
 	}
 	//now we need to do the indirect blocks
