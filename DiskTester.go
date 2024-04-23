@@ -20,4 +20,5 @@ func main() {
 
 	FileSystem.Write(&newFileInode, contentToWrite)
 	fmt.Println(FileSystem.Read(newFileInode))
+	//
 }
