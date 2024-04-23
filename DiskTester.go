@@ -19,11 +19,11 @@ func main() {
 	contentToWrite := []byte(stringContents)
 
 	FileSystem.Write(&newFileInode, contentToWrite)
-	testFileInode, testFileInodeNum := FileSystem.Open(FileSystem.READ, "Text.txt", FileSystem.RootFolder)
-	fmt.Println(testFileInodeNum, FileSystem.Read(testFileInode))
+	fileContents := FileSystem.Read(newFileInode)
+	fmt.Println(fileContents)
 	newDirectoryInode, newInodeNum := FileSystem.Open(FileSystem.CREATE, "NewDir",
 		FileSystem.RootFolder)
-	directoryBlock := FileSystem.CreateDirectoryFile(FileSystem.ReadSuperBlock().RootDirInode, newInodeNum)
+	directoryBlock, newDirectoryInode := FileSystem.CreateDirectoryFile(FileSystem.ReadSuperBlock().RootDirInode, newInodeNum)
 	bytesForDirectoryBlock := FileSystem.EncodeToBytes(directoryBlock)
 	fmt.Println("WARNING Encoded Directory block is %d bytes", len(bytesForDirectoryBlock))
 	FileSystem.Write(&newDirectoryInode, bytesForDirectoryBlock)

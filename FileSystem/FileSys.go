@@ -128,7 +128,7 @@ func createRootDir(sblock SuperBlock) {
 	freeBlockBitmap := ReadFreeBlockBitmap(sblock)
 	freeBlockBitmap[0][rootFolder.DirectBlock1] = true
 	writeFreeBlockBitmapToDisk(freeBlockBitmap, sblock)
-	rootBlock := CreateDirectoryFile(0, sblock.RootDirInode)
+	rootBlock, _ := CreateDirectoryFile(0, sblock.RootDirInode)
 	rootBlockBytes := EncodeToBytes(rootBlock)
 	fmt.Println("WARNING Encoded Directory block is %d bytes", len(rootBlockBytes))
 	copy(Disk[rootFolder.DirectBlock1][:], rootBlockBytes)
@@ -138,10 +138,13 @@ func createRootDir(sblock SuperBlock) {
 	RootFolder = rootFolder
 }
 
-func CreateDirectoryFile(parentInode int, folderinode int) DirectoryBlock {
+func CreateDirectoryFile(parentInode int, folderinode int) (retBlock DirectoryBlock, currentInode INode) {
 	if parentInode != 0 { //handle root directory specially, for all others, mark as folder now
-		currentInode := getInodeFromDisk(folderinode) //we need to mark this as a folder now
+		currentInode = getInodeFromDisk(folderinode) //we need to mark this as a folder now
 		currentInode.IsDirectory = true
+		if !currentInode.IsValid {
+			currentInode.IsValid = true
+		}
 		writeInodeToDisk(currentInode, folderinode, ReadSuperBlock())
 	}
 	dot := DirectoryEntry{
@@ -153,7 +156,7 @@ func CreateDirectoryFile(parentInode int, folderinode int) DirectoryBlock {
 	}
 	dotdot.Name[0] = '.'
 	dotdot.Name[1] = '.'
-	return DirectoryBlock{dot, dotdot}
+	return DirectoryBlock{dot, dotdot}, currentInode
 }
 
 func writeFreeBlockBitmapToDisk(bitmap [][BLOCK_SIZE]bool, sblock SuperBlock) {
@@ -431,7 +434,6 @@ func Write(file *INode, content []byte) {
 			if blockEnd > len(content) {
 				blockEnd = len(content)
 			}
-			//todo apparent off by one error - resume looking
 			copy(Disk[file.DirectBlock3][:], content[BLOCK_SIZE*block:blockEnd])
 		} else {
 			indirectBlockVal := getIndirectBlock(file)
@@ -463,6 +465,9 @@ func Write(file *INode, content []byte) {
 	if hasLeftovers {
 		leftovers := content[(len(content)/BLOCK_SIZE)*block:]
 		if numCompleteBlocks == 0 {
+			if file.DirectBlock1 == 0 {
+				file.DirectBlock1 = allocateNewBlock(ReadSuperBlock())
+			}
 			copy(Disk[file.DirectBlock1][:], leftovers)
 		} else if numCompleteBlocks == 1 {
 			copy(Disk[file.DirectBlock2][:], leftovers)
