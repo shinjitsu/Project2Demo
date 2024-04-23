@@ -63,8 +63,16 @@ const (
 )
 
 func InitializeFileSystem() {
+	//explicitly zero the filesystem - this shouldn't be needed
+	for blockLoc, _ := range Disk {
+		for byteLoc, _ := range Disk[blockLoc] {
+			Disk[blockLoc][byteLoc] = 0
+		}
+	}
+
 	//order on the Disk will be Superblock in block 0, inode bitmap in block 1, free block bitmap  blocks 2-7
 	//inodes in blocks 8-39 and datablocks in blocks 40-end
+
 	supBlock := SuperBlock{
 		INodeStart:       8,
 		RootDirInode:     1,
@@ -76,7 +84,9 @@ func InitializeFileSystem() {
 	copy(Disk[0][:], superblockBytes)
 	createInodeBitmap(supBlock)
 	createFreeBlockBitmap(supBlock)
+	fmt.Println("#######################################33 Disk[47]", string(Disk[47][:]))
 	createInodes(supBlock)
+	fmt.Println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Disk[47]", string(Disk[47][:]))
 	createRootDir(supBlock)
 }
 
@@ -98,6 +108,7 @@ func createInodeBitmap(block SuperBlock) {
 
 func createInodes(sblock SuperBlock) {
 	//here we will create all 512 INodes in the filesystem as invalid files
+	//fix this
 	for iNodeNum := 0; iNodeNum < 512; iNodeNum++ {
 		currentInode := INode{} //make empty with all fields having false/zero value
 		inodeBytes := EncodeToBytes(currentInode)
@@ -130,10 +141,10 @@ func createRootDir(sblock SuperBlock) {
 	writeFreeBlockBitmapToDisk(freeBlockBitmap, sblock)
 	rootBlock, _ := CreateDirectoryFile(0, sblock.RootDirInode)
 	rootBlockBytes := EncodeToBytes(rootBlock)
-	fmt.Println("WARNING Encoded Directory block is %d bytes", len(rootBlockBytes))
+	//fmt.Println("WARNING Encoded Directory block is %d bytes", len(rootBlockBytes))
 	copy(Disk[rootFolder.DirectBlock1][:], rootBlockBytes)
 	rootFolderAsBytes := EncodeToBytes(rootFolder)
-	fmt.Println("WARNING Encoded rootFolderAsBytes is %d bytes", len(rootFolderAsBytes))
+	//fmt.Println("WARNING Encoded rootFolderAsBytes is %d bytes", len(rootFolderAsBytes))
 	copy(Disk[sblock.INodeStart][INODE_SIZE*sblock.RootDirInode:INODE_SIZE*sblock.RootDirInode+INODE_SIZE], rootFolderAsBytes)
 	RootFolder = rootFolder
 }
@@ -145,7 +156,7 @@ func CreateDirectoryFile(parentInode int, folderinode int) (retBlock DirectoryBl
 		if !currentInode.IsValid {
 			currentInode.IsValid = true
 		}
-		writeInodeToDisk(currentInode, folderinode, ReadSuperBlock())
+		writeInodeToDisk(&currentInode, folderinode, ReadSuperBlock())
 	}
 	dot := DirectoryEntry{
 		Inode: folderinode,
@@ -284,6 +295,7 @@ func Open(mode int, name string, parentDir INode) (INode, int) {
 		directoryEntryBlock[validDirectoryEntries] = newFile
 		//write the directory entry back to the disk block
 		currentDirectoryBlockBytes := EncodeToBytes(directoryEntryBlock)
+		fmt.Println("OPEN: About to write to disk block:", parentDir.DirectBlock1)
 		copy(Disk[parentDir.DirectBlock1][:], currentDirectoryBlockBytes)
 		return newInode, newInodeNum
 	}
@@ -315,15 +327,16 @@ func createNewInode(sBlock SuperBlock) (INode, int) {
 		CreateTime:     time.Now().Unix(),
 		LastModifyTime: time.Now().Unix(),
 	}
-	writeInodeToDisk(newInode, freeInodeLoc, sBlock)
+	writeInodeToDisk(&newInode, freeInodeLoc, sBlock)
 	return newInode, freeInodeLoc
 }
 
-func writeInodeToDisk(inode INode, InodeNum int, sblock SuperBlock) {
+func writeInodeToDisk(inode *INode, InodeNum int, sblock SuperBlock) {
 	InodeAsBytes := EncodeToBytes(inode)
-	fmt.Println("Writing Inode ", InodeNum, " to bytes, size: ", len(InodeAsBytes), "cap: ", cap(InodeAsBytes))
+	//fmt.Println("Writing Inode ", InodeNum, " to bytes, size: ", len(InodeAsBytes), "cap: ", cap(InodeAsBytes))
 	InodeBlock := InodeNum / (BLOCK_SIZE / INODE_SIZE) //once again this is floor integer division
 	InodeLocInBlock := InodeNum % (BLOCK_SIZE / INODE_SIZE)
+	fmt.Println("WRITEINODETODISK: about to write to block:", sblock.INodeStart+InodeBlock)
 	copy(Disk[sblock.INodeStart+InodeBlock][INODE_SIZE*InodeLocInBlock:INODE_SIZE*InodeLocInBlock+INODE_SIZE], InodeAsBytes)
 }
 
@@ -359,7 +372,7 @@ func Unlink(inodeNumToDelete int, parentDir INode) {
 			writeInodeBitmapToDisk(inodeBitmap, ReadSuperBlock())
 			inodeStruct := getInodeFromDisk(entry.Inode)
 			inodeStruct.IsValid = false
-			writeInodeToDisk(inodeStruct, entry.Inode, ReadSuperBlock())
+			writeInodeToDisk(&inodeStruct, entry.Inode, ReadSuperBlock())
 			//now write directory structure back out to disk
 			currentDirectoryBlockBytes := EncodeToBytes(directoryEntryBlock)
 			copy(Disk[parentDir.DirectBlock1][:], currentDirectoryBlockBytes)
@@ -370,12 +383,13 @@ func Unlink(inodeNumToDelete int, parentDir INode) {
 	log.Fatal("Tried to delete file not in folder")
 }
 
-func Read(file INode) string { //I told some of you who asked that you can assume all text files, so I'll return a string
+func Read(file *INode) string { //I told some of you who asked that you can assume all text files, so I'll return a string
 	if !file.IsValid || file.IsDirectory {
 		return "" //maybe we should error, but I'll just return nothing
 	}
 	//I'm going to use string.Builder - which I didn't introduce in your class, but you can use + and it will be less efficient but will work
 	fileContents := strings.Builder{}
+	fmt.Println("READ: reading from Disk block", file.DirectBlock1)
 	firstBlock := Disk[file.DirectBlock1]
 	fileContents.Write(firstBlock[:])
 	if file.DirectBlock2 == 0 {
@@ -392,7 +406,7 @@ func Read(file INode) string { //I told some of you who asked that you can assum
 		return fileContents.String()
 	}
 	//now things get more complicated, we need to read from the indirect block
-	indirectBlockVal := getIndirectBlock(&file)
+	indirectBlockVal := getIndirectBlock(file)
 	for _, blockNum := range indirectBlockVal {
 		if blockNum == 0 {
 			break
@@ -403,7 +417,8 @@ func Read(file INode) string { //I told some of you who asked that you can assum
 	return fileContents.String()
 }
 
-func Write(file *INode, content []byte) {
+func Write(file *INode, inodeNum int, content []byte) {
+	file.LastModifyTime = time.Now().Unix() //update last modify time
 	numCompleteBlocks := len(content) / BLOCK_SIZE
 	hasLeftovers := len(content)%BLOCK_SIZE > 0
 	block := 0
@@ -416,6 +431,7 @@ func Write(file *INode, content []byte) {
 			if blockEnd > len(content) {
 				blockEnd = len(content)
 			}
+			fmt.Println("WRITE: writing to file.DirectBlock1 block ", file.DirectBlock1)
 			copy(Disk[file.DirectBlock1][:], content[BLOCK_SIZE*block:blockEnd])
 		} else if block == 1 {
 			if file.DirectBlock2 == 0 {
@@ -425,6 +441,7 @@ func Write(file *INode, content []byte) {
 			if blockEnd > len(content) {
 				blockEnd = len(content)
 			}
+			fmt.Println("WRITE: writing to file.DirectBlock2 block ", file.DirectBlock2)
 			copy(Disk[file.DirectBlock2][:], content[BLOCK_SIZE*block:blockEnd])
 		} else if block == 2 {
 			if file.DirectBlock3 == 0 {
@@ -434,6 +451,7 @@ func Write(file *INode, content []byte) {
 			if blockEnd > len(content) {
 				blockEnd = len(content)
 			}
+			fmt.Println("WRITE: writing to file.DirectBlock3 block ", file.DirectBlock3)
 			copy(Disk[file.DirectBlock3][:], content[BLOCK_SIZE*block:blockEnd])
 		} else {
 			indirectBlockVal := getIndirectBlock(file)
@@ -443,6 +461,7 @@ func Write(file *INode, content []byte) {
 					blockEnd = len(content)
 				}
 				if blockLoc != 0 {
+					fmt.Println("WRITE: writing to indirect block ", blockLoc)
 					copy(Disk[blockLoc][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
 					block++
 					if block >= numCompleteBlocks {
@@ -452,6 +471,7 @@ func Write(file *INode, content []byte) {
 					newBlock := allocateNewBlock(ReadSuperBlock())
 					indirectBlockVal[indirectBlockNum] = newBlock
 					//write the actual data to disk
+					fmt.Println("WRITE: writing to indirect block ", newBlock)
 					copy(Disk[newBlock][:], content[BLOCK_SIZE*block:blockEnd])
 					block++
 				}
@@ -459,6 +479,7 @@ func Write(file *INode, content []byte) {
 			//if we wrote anything to indirect blocks, then write the indirect block block again just incase
 			indirectBlockBytes := EncodeToBytes(indirectBlockVal)
 			//write the indirect block to disk
+			fmt.Println("WRITE: writing the indirect block itself", file.IndirectBlock)
 			copy(Disk[file.IndirectBlock][:], indirectBlockBytes)
 		}
 	}
@@ -468,27 +489,34 @@ func Write(file *INode, content []byte) {
 			if file.DirectBlock1 == 0 {
 				file.DirectBlock1 = allocateNewBlock(ReadSuperBlock())
 			}
+			fmt.Println("WRITE: writing partial to file.DirectBlock1 block ", file.DirectBlock1)
 			copy(Disk[file.DirectBlock1][:], leftovers)
 		} else if numCompleteBlocks == 1 {
+			fmt.Println("WRITE: writing partial to file.DirectBlock2 block ", file.DirectBlock2)
 			copy(Disk[file.DirectBlock2][:], leftovers)
 		} else if numCompleteBlocks == 2 {
+			fmt.Println("WRITE: writing partial to file.DirectBlock3 block ", file.DirectBlock3)
 			copy(Disk[file.DirectBlock3][:], leftovers)
 		} else {
 			indirectBlockVal := getIndirectBlock(file)
 			finalBlockLoc := indirectBlockVal[numCompleteBlocks-3] //minus 3 for the three direct blocks
 			if finalBlockLoc != 0 {
+				fmt.Println("WRITE: writing partial to indirect block ", finalBlockLoc)
 				copy(Disk[finalBlockLoc][:], leftovers)
 			} else {
 				newBlock := allocateNewBlock(ReadSuperBlock())
 				indirectBlockVal[numCompleteBlocks-3] = newBlock
 				indirectBlockBytes := EncodeToBytes(indirectBlockVal)
 				//write the indirect block to disk
+				fmt.Println("WRITE: writing the indirect block itself", file.IndirectBlock)
 				copy(Disk[file.IndirectBlock][:], indirectBlockBytes)
 				//write the actual data to disk
+				fmt.Println("WRITE: writing partial to NEW indirect block ", newBlock)
 				copy(Disk[newBlock][:], leftovers)
 			}
 		}
 	}
+	writeInodeToDisk(file, inodeNum, ReadSuperBlock())
 }
 
 // returns location of newly allocated block
