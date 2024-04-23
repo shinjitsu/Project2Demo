@@ -10,7 +10,7 @@ import (
 func main() {
 	// this is I think the test I promised you - except that maybe the string is too short
 	FileSystem.InitializeFileSystem()
-
+	// d
 	newFileInode, _ := FileSystem.Open(FileSystem.CREATE, "Text.txt", FileSystem.RootFolder)
 	stringContents, err := os.ReadFile("testInput.txt")
 	if err != nil {
@@ -19,7 +19,8 @@ func main() {
 	contentToWrite := []byte(stringContents)
 
 	FileSystem.Write(&newFileInode, contentToWrite)
-	//	fmt.Println(FileSystem.Read(newFileInode))
+	testFileInode, testFileInodeNum := FileSystem.Open(FileSystem.READ, "Text.txt", FileSystem.RootFolder)
+	fmt.Println(testFileInodeNum, FileSystem.Read(testFileInode))
 	newDirectoryInode, newInodeNum := FileSystem.Open(FileSystem.CREATE, "NewDir",
 		FileSystem.RootFolder)
 	directoryBlock := FileSystem.CreateDirectoryFile(FileSystem.ReadSuperBlock().RootDirInode, newInodeNum)

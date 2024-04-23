@@ -22,7 +22,7 @@ var Disk [66184][BLOCK_SIZE]byte
 var RootFolder INode
 
 const (
-	INODE_SIZE = 64
+	INODE_SIZE = 512 //even though Inodes are only 64 bytes, encoded they take up 170, and need power of 2
 	BLOCK_SIZE = 1024
 )
 
@@ -37,7 +37,7 @@ type SuperBlock struct {
 type INode struct {
 	IsValid        bool //true if this inode is a real file
 	IsDirectory    bool //true if this file is actually a directory entry
-	version        int  //at the moment this is here mostly to make the inodes be 64 bytes
+	Version        int  //at the moment this is here mostly to make the inodes be 64 bytes
 	DirectBlock1   int
 	DirectBlock2   int
 	DirectBlock3   int
@@ -112,7 +112,7 @@ func createRootDir(sblock SuperBlock) {
 	rootFolder := INode{
 		IsValid:        true,
 		IsDirectory:    true,
-		version:        0,
+		Version:        0,
 		DirectBlock1:   40, //since this happens before any other allocation, just grab block 40
 		DirectBlock2:   0,
 		DirectBlock3:   0,
@@ -257,7 +257,8 @@ func Open(mode int, name string, parentDir INode) (INode, int) {
 	validDirectoryEntries := 0
 	for _, entry := range directoryEntryBlock {
 		fmt.Println("DEBUG FileName: ", string(entry.Name[:]))
-		if string(entry.Name[:]) == name {
+		//not really distinguishing read vs write here.
+		if string(entry.Name[:len(name)]) == name {
 			return getInodeFromDisk(entry.Inode), entry.Inode //if file is here, I'll just return it and the Inode Number for now
 		}
 		if entry.Inode == 0 && entry.Name[0] != '.' && entry.Name[1] != '.' { //once we get to invalid entries, get out of loop
@@ -303,7 +304,7 @@ func createNewInode(sBlock SuperBlock) (INode, int) {
 	newInode := INode{
 		IsValid:        true,
 		IsDirectory:    false,
-		version:        0,
+		Version:        0,
 		DirectBlock1:   0,
 		DirectBlock2:   0,
 		DirectBlock3:   0,
@@ -317,20 +318,22 @@ func createNewInode(sBlock SuperBlock) (INode, int) {
 
 func writeInodeToDisk(inode INode, InodeNum int, sblock SuperBlock) {
 	InodeAsBytes := EncodeToBytes(inode)
-	InodeBlock := (BLOCK_SIZE / INODE_SIZE) / InodeNum //once again this is floor integer division
-	InodeLocInBlock := BLOCK_SIZE % InodeNum
+	fmt.Println("Writing Inode ", InodeNum, " to bytes, size: ", len(InodeAsBytes), "cap: ", cap(InodeAsBytes))
+	InodeBlock := InodeNum / (BLOCK_SIZE / INODE_SIZE) //once again this is floor integer division
+	InodeLocInBlock := InodeNum % (BLOCK_SIZE / INODE_SIZE)
 	copy(Disk[sblock.INodeStart+InodeBlock][INODE_SIZE*InodeLocInBlock:INODE_SIZE*InodeLocInBlock+INODE_SIZE], InodeAsBytes)
 }
 
 func getInodeFromDisk(inodeNum int) INode {
-	INodeBlock := inodeNum / (BLOCK_SIZE / INODE_SIZE) //there are 32 inodes per block, again int/floor division
+	INodeBlock := inodeNum / (BLOCK_SIZE / INODE_SIZE) //there are 4 inodes per block, again int/floor division
 	InodeOffset := inodeNum % (BLOCK_SIZE / INODE_SIZE)
+	sblock := ReadSuperBlock()
 	InodeFromDisk := INode{}
-	InodeAsBytes := Disk[INodeBlock][InodeOffset : InodeOffset+INODE_SIZE]
+	InodeAsBytes := Disk[sblock.INodeStart+INodeBlock][InodeOffset*INODE_SIZE : (InodeOffset*INODE_SIZE)+INODE_SIZE]
 	decoder := gob.NewDecoder(bytes.NewReader(InodeAsBytes))
 	err := decoder.Decode(&InodeFromDisk)
 	if err != nil {
-		log.Fatal("Error decoding Inode from disk - better blue Screen", err)
+		log.Fatal("Error decoding Inode ", inodeNum, " from disk - better blue Screen", err)
 	}
 	return InodeFromDisk
 }
@@ -410,7 +413,6 @@ func Write(file *INode, content []byte) {
 			if blockEnd > len(content) {
 				blockEnd = len(content)
 			}
-			//Todo off by one error
 			copy(Disk[file.DirectBlock1][:], content[BLOCK_SIZE*block:blockEnd])
 		} else if block == 1 {
 			if file.DirectBlock2 == 0 {
