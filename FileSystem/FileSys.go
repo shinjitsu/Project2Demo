@@ -245,7 +245,7 @@ func Open(mode int, name string, parentDir INode) (INode, int) {
 	decoder := gob.NewDecoder(bytes.NewReader(DirectoryBlockBytes[:]))
 	err := decoder.Decode(&directoryEntryBlock)
 	if err != nil {
-		log.Fatal("Error decoding Directory block: ", err)
+		log.Fatal("Error decoding Directory block opening file ", name, ": ", err)
 	}
 	validDirectoryEntries := 0
 	for _, entry := range directoryEntryBlock {
@@ -403,6 +403,7 @@ func Write(file *INode, content []byte) {
 			if blockEnd > len(content) {
 				blockEnd = len(content)
 			}
+			//Todo off by one error
 			copy(Disk[file.DirectBlock1][:], content[BLOCK_SIZE*block:blockEnd])
 		} else if block == 2 {
 			if file.DirectBlock2 == 0 {
