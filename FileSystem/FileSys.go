@@ -421,6 +421,7 @@ func Write(file *INode, content []byte) {
 			if blockEnd > len(content) {
 				blockEnd = len(content)
 			}
+			//todo apparent off by one error - resume looking
 			copy(Disk[file.DirectBlock3][:], content[BLOCK_SIZE*block:blockEnd])
 		} else {
 			indirectBlockVal := getIndirectBlock(file)
