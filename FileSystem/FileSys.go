@@ -130,13 +130,20 @@ func createRootDir(sblock SuperBlock) {
 	writeFreeBlockBitmapToDisk(freeBlockBitmap, sblock)
 	rootBlock := CreateDirectoryFile(0, sblock.RootDirInode)
 	rootBlockBytes := EncodeToBytes(rootBlock)
+	fmt.Println("WARNING Encoded Directory block is %d bytes", len(rootBlockBytes))
 	copy(Disk[rootFolder.DirectBlock1][:], rootBlockBytes)
 	rootFolderAsBytes := EncodeToBytes(rootFolder)
+	fmt.Println("WARNING Encoded rootFolderAsBytes is %d bytes", len(rootFolderAsBytes))
 	copy(Disk[sblock.INodeStart][INODE_SIZE*sblock.RootDirInode:INODE_SIZE*sblock.RootDirInode+INODE_SIZE], rootFolderAsBytes)
 	RootFolder = rootFolder
 }
 
 func CreateDirectoryFile(parentInode int, folderinode int) DirectoryBlock {
+	if parentInode != 0 { //handle root directory specially, for all others, mark as folder now
+		currentInode := getInodeFromDisk(folderinode) //we need to mark this as a folder now
+		currentInode.IsDirectory = true
+		writeInodeToDisk(currentInode, folderinode, ReadSuperBlock())
+	}
 	dot := DirectoryEntry{
 		Inode: folderinode,
 	}
@@ -253,7 +260,7 @@ func Open(mode int, name string, parentDir INode) (INode, int) {
 		if string(entry.Name[:]) == name {
 			return getInodeFromDisk(entry.Inode), entry.Inode //if file is here, I'll just return it and the Inode Number for now
 		}
-		if entry.Inode == 0 { //once we get to invalid entries, get out of look
+		if entry.Inode == 0 && entry.Name[0] != '.' && entry.Name[1] != '.' { //once we get to invalid entries, get out of loop
 			break
 		}
 		validDirectoryEntries++
@@ -393,9 +400,9 @@ func Read(file INode) string { //I told some of you who asked that you can assum
 func Write(file *INode, content []byte) {
 	numCompleteBlocks := len(content) / BLOCK_SIZE
 	hasLeftovers := len(content)%BLOCK_SIZE > 0
-	block := 1
-	for ; block <= numCompleteBlocks; block++ {
-		if block == 1 {
+	block := 0
+	for ; block < numCompleteBlocks; block++ {
+		if block == 0 {
 			if file.DirectBlock1 == 0 {
 				file.DirectBlock1 = allocateNewBlock(ReadSuperBlock())
 			}
@@ -405,7 +412,7 @@ func Write(file *INode, content []byte) {
 			}
 			//Todo off by one error
 			copy(Disk[file.DirectBlock1][:], content[BLOCK_SIZE*block:blockEnd])
-		} else if block == 2 {
+		} else if block == 1 {
 			if file.DirectBlock2 == 0 {
 				file.DirectBlock2 = allocateNewBlock(ReadSuperBlock())
 			}
@@ -414,7 +421,7 @@ func Write(file *INode, content []byte) {
 				blockEnd = len(content)
 			}
 			copy(Disk[file.DirectBlock2][:], content[BLOCK_SIZE*block:blockEnd])
-		} else if block == 3 {
+		} else if block == 2 {
 			if file.DirectBlock3 == 0 {
 				file.DirectBlock3 = allocateNewBlock(ReadSuperBlock())
 			}
@@ -422,10 +429,15 @@ func Write(file *INode, content []byte) {
 			if blockEnd > len(content) {
 				blockEnd = len(content)
 			}
+			//todo apparent off by one error - resume looking
 			copy(Disk[file.DirectBlock3][:], content[BLOCK_SIZE*block:blockEnd])
 		} else {
 			indirectBlockVal := getIndirectBlock(file)
 			for indirectBlockNum, blockLoc := range indirectBlockVal {
+				blockEnd := BLOCK_SIZE * (block + 1)
+				if blockEnd > len(content) {
+					blockEnd = len(content)
+				}
 				if blockLoc != 0 {
 					copy(Disk[blockLoc][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
 					block++
@@ -436,7 +448,7 @@ func Write(file *INode, content []byte) {
 					newBlock := allocateNewBlock(ReadSuperBlock())
 					indirectBlockVal[indirectBlockNum] = newBlock
 					//write the actual data to disk
-					copy(Disk[newBlock][:], content[BLOCK_SIZE*block:BLOCK_SIZE*(block+1)])
+					copy(Disk[newBlock][:], content[BLOCK_SIZE*block:blockEnd])
 					block++
 				}
 			}
@@ -485,9 +497,9 @@ func allocateNewBlock(sblock SuperBlock) int {
 				//this bit is available
 				freeBlockBitmap[bitblock][locInBlock] = true
 				writeFreeBlockBitmapToDisk(freeBlockBitmap, sblock)
-				return blockNum
+				return locInBlock
 			} else {
-				blockNum++
+
 			}
 		}
 	}
