@@ -32,4 +32,10 @@ func main() {
 	FileSystem.Write(&file2Inode, lastFileInodeNum, dataToWrite)
 	fileInSubdirectoryContents := FileSystem.Read(&file2Inode)
 	fmt.Println(fileInSubdirectoryContents)
+	//now test delete
+	FileSystem.Unlink(lastFileInodeNum, newDirectoryInode)
+}
+
+func Cat(args []string) {
+
 }
