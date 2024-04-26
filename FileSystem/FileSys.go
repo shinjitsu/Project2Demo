@@ -368,6 +368,7 @@ func Unlink(inodeNumToDelete int, parentDir INode) {
 			//now write directory structure back out to disk
 			currentDirectoryBlockBytes := EncodeToBytes(directoryEntryBlock)
 			copy(Disk[parentDir.DirectBlock1][:], currentDirectoryBlockBytes)
+			return
 		}
 		validDirectoryEntries++
 	}
